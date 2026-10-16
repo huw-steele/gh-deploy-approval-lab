@@ -1,0 +1,59 @@
+name: Design B (approval environment)
+run-name: Design B ${{ inputs.label }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Label to tell runs apart
+        type: string
+        default: ""
+      deploy_seconds:
+        description: How long the fake deploy takes, in seconds
+        type: number
+        default: 90
+
+permissions: {}
+
+jobs:
+  # `lab` has no reviewers, so the plan runs straight away.
+  plan:
+    runs-on: ubuntu-latest
+    environment: lab
+    steps:
+      - name: Fake plan
+        env:
+          LABEL: ${{ inputs.label }}
+        run: |
+          echo "### Plan for run $GITHUB_RUN_NUMBER $LABEL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Fake plan: 1 to add, 0 to change, 0 to destroy." >> "$GITHUB_STEP_SUMMARY"
+
+  # The only job that waits for a reviewer. It does no work, so a newer run can cancel it while it waits.
+  approve:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: lab-approval
+    concurrency:
+      group: lab-approve
+      cancel-in-progress: true
+    steps:
+      - name: Approved
+        run: echo "Run $GITHUB_RUN_NUMBER approved"
+
+  # Separate group that never cancels, so a running deploy is never interrupted.
+  deploy:
+    needs: approve
+    runs-on: ubuntu-latest
+    environment: lab
+    concurrency:
+      group: lab-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Fake deploy
+        env:
+          LABEL: ${{ inputs.label }}
+          DEPLOY_SECONDS: ${{ inputs.deploy_seconds }}
+        run: |
+          echo "Deploying run $GITHUB_RUN_NUMBER $LABEL"
+          sleep "$DEPLOY_SECONDS"
+          echo "Deployed run $GITHUB_RUN_NUMBER"
