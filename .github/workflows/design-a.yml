@@ -1,0 +1,67 @@
+name: Design A (plan environment + cancel waiting runs)
+run-name: Design A ${{ inputs.label }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Label to tell runs apart
+        type: string
+        default: ""
+      apply_seconds:
+        description: How long the fake apply takes, in seconds
+        type: number
+        default: 90
+
+permissions: {}
+
+jobs:
+  # Runs on prod-plan, which has no reviewers, so it starts straight away.
+  # In real use prod-plan would hold a read-only identity.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    environment: prod-plan
+    steps:
+      - name: Fake terraform plan (written to the job summary)
+        env:
+          LABEL: ${{ inputs.label }}
+        run: |
+          echo "### Plan for run $GITHUB_RUN_NUMBER $LABEL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Fake plan: 1 to add, 0 to change, 0 to destroy." >> "$GITHUB_STEP_SUMMARY"
+
+  # Cancels older runs of this workflow that are waiting for approval.
+  # Runs that are already applying are left alone.
+  cancel-superseded:
+    name: Cancel older runs waiting for approval
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel older runs waiting for approval
+        uses: styfle/cancel-workflow-action@d07a454dad7609a92316b57b23c9ccfd4f59af66 # 0.13.1
+        with:
+          only_status: waiting
+          # Lab only: every manual run is the same commit, and the action skips same-commit runs by default.
+          ignore_sha: true
+
+  # Runs on prod, which has you as reviewer, so it waits for approval before it starts.
+  # Its concurrency group never cancels, so an apply that has started is never interrupted.
+  apply:
+    name: Apply
+    needs: cancel-superseded
+    runs-on: ubuntu-latest
+    environment: prod
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Fake terraform apply
+        env:
+          LABEL: ${{ inputs.label }}
+          APPLY_SECONDS: ${{ inputs.apply_seconds }}
+        run: |
+          echo "Applying run $GITHUB_RUN_NUMBER $LABEL"
+          sleep "$APPLY_SECONDS"
+          echo "Applied run $GITHUB_RUN_NUMBER"
